@@ -61,6 +61,19 @@ section[data-testid="stSidebar"] { display: none; }
 </style>
 """, unsafe_allow_html=True)
 
+# ── Helper — must be defined before the table renders it ─────────────────────
+def _program(lead: dict) -> str:
+    if lead.get("type") == "School":
+        return "SmartTech for Schools"
+    goals = lead.get("goals", "")
+    age   = lead.get("child_age", "")
+    if "Coding" in goals:           return "SmartTech / YPDP"
+    if "Competitive" in goals:      return "HOTS Program"
+    if "thinking" in goals.lower(): return "HOTS Program"
+    if age == "5–7 years":          return "WizBlock Basics"
+    return "HOTS / SmartTech"
+
+
 # Init state guard
 if "all_leads" not in st.session_state:
     st.session_state.all_leads  = []
@@ -203,15 +216,3 @@ with right:
       <span class="badge warm">🟠 45-69</span> Same-day follow-up<br>
       <span class="badge cool">🔵 0-44</span> Email nurture
     </div>""", unsafe_allow_html=True)
-
-
-def _program(lead: dict) -> str:
-    if lead.get("type") == "School":
-        return "SmartTech for Schools"
-    goals = lead.get("goals", "")
-    age   = lead.get("child_age", "")
-    if "Coding" in goals:       return "SmartTech / YPDP"
-    if "Competitive" in goals:  return "HOTS Program"
-    if "thinking" in goals.lower(): return "HOTS Program"
-    if age == "5–7 years":      return "WizBlock Basics"
-    return "HOTS / SmartTech"
