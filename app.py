@@ -192,7 +192,7 @@ if qopts:
     for i, o in enumerate(qopts):
         if cols[i % n].button(o, key=f"q{i}_{st.session_state.step}_{o[:10]}"):
             st.session_state.options = []
-            route(o)
+            route(o, from_button=True)   # always goes to step handler, never AI
             st.rerun()
 
 
