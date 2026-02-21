@@ -1,7 +1,5 @@
 # groq_client.py
 # Model: llama-3.3-70b-versatile (Groq, free tier)
-# Key reading: checks secrets first, then session state, then env var
-# Never silently fails without telling us why
 
 import os
 import requests
@@ -13,29 +11,16 @@ GROQ_MODEL = "llama-3.3-70b-versatile"
 
 
 def get_key() -> str:
-    """
-    Try to get the Groq API key from multiple sources in order:
-    1. Streamlit secrets (production on Streamlit Cloud)
-    2. st.session_state (user pasted it in)
-    3. Environment variable (local .env usage)
-    Returns empty string if none found.
-    """
-    # Try Streamlit secrets
     try:
         key = st.secrets.get("GROQ_API_KEY", "")
         if key:
             return key
     except Exception:
         pass
-
-    # Try session state
     key = st.session_state.get("groq_key", "")
     if key:
         return key
-
-    # Try environment variable
-    key = os.environ.get("GROQ_API_KEY", "")
-    return key
+    return os.environ.get("GROQ_API_KEY", "")
 
 
 def has_key() -> bool:
@@ -43,39 +28,22 @@ def has_key() -> bool:
 
 
 def _call(messages: list, max_tokens: int = 300, temperature: float = 0.7) -> str:
-    """
-    Make a Groq API call.
-    Returns the text response, or empty string on failure.
-    Prints the actual error so we can debug — no more silent failures.
-    """
     key = get_key()
     if not key:
         return ""
-
     try:
         r = requests.post(
             GROQ_URL,
-            headers={
-                "Authorization": f"Bearer {key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model":       GROQ_MODEL,
-                "messages":    messages,
-                "max_tokens":  max_tokens,
-                "temperature": temperature,
-            },
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+            json={"model": GROQ_MODEL, "messages": messages,
+                  "max_tokens": max_tokens, "temperature": temperature},
             timeout=20,
         )
         data = r.json()
-
-        # Surface API errors properly instead of hiding them
         if "error" in data:
             print(f"[Groq Error] {data['error']}")
             return ""
-
         return data["choices"][0]["message"]["content"].strip()
-
     except requests.exceptions.Timeout:
         print("[Groq] Request timed out")
         return ""
@@ -84,29 +52,52 @@ def _call(messages: list, max_tokens: int = 300, temperature: float = 0.7) -> st
         return ""
 
 
-# ── 1. Main Q&A — answers ANY question using real WizKlub knowledge ───────────
+# ── 1. Main Q&A — handles BOTH WizKlub questions AND irrelevant messages ──────
+#
+# The model does two things in one call:
+#   a) Decides if the message is relevant to WizKlub/education
+#   b) If yes, answers from the knowledge base
+#      If no, returns the literal word IRRELEVANT so we show a polite deflection
+#
+# DEMO RULE: Only mention a demo if the person explicitly asked about
+# next steps or signing up. Never volunteer it unprompted.
+
 def answer_question(user_msg: str, lead: dict, history: list) -> str:
-    system = f"""You are Wiz, a friendly and knowledgeable assistant for WizKlub.
+    name = lead.get("name", "")
+    name_str = f", {name}" if name else ""
 
-Use the verified WizKlub information below to answer questions accurately.
-If a question is not covered in the info, say "our team will cover that in the demo" — never make up facts.
+    system = f"""You are Wiz, a friendly assistant for WizKlub — a children's EdTech company in India.
 
-=== WIZKLUB VERIFIED INFORMATION ===
+First, decide if this message is RELEVANT or IRRELEVANT to WizKlub or education.
+
+RELEVANT = anything about WizKlub, children's learning, programs, pricing, schedules,
+how classes work, school partnerships, subjects taught, STEM, coding, critical thinking, etc.
+
+IRRELEVANT = anything completely unrelated. Examples: "I'm hungry", "tell me a joke",
+"what's the weather", "who won the match", random greetings with no question, gibberish.
+
+If IRRELEVANT — respond with exactly this word and nothing else: IRRELEVANT
+
+If RELEVANT — answer using ONLY the verified information below. Never invent facts.
+If the question isn't covered below, say "our team can clarify that for you."
+
+=== VERIFIED WIZKLUB INFORMATION ===
 {WIZKLUB_KNOWLEDGE}
 === END ===
 
-About this visitor:
+What you know about this visitor so far:
 - Type: {lead.get('type') or 'not yet identified'}
 - Child age: {lead.get('child_age') or 'not yet asked'}
 - Goals: {lead.get('goals') or 'not yet asked'}
 - School size: {lead.get('school_size') or 'not yet asked'}
-- Name: {lead.get('name') or 'not yet given'}
+- Name: {name or 'not yet given'}
 
-Answer rules:
-1. Answer the actual question directly using the info above
-2. Keep it warm and concise — 2 to 3 sentences max
-3. Personalise based on what you know about them
-4. End with a gentle nudge toward booking a demo"""
+STRICT RULES when answering:
+1. Answer the question directly — 2 to 3 sentences max
+2. Be warm and personalise using what you know about this visitor
+3. ONLY mention booking a demo or next steps if the person explicitly asked about it
+4. Do NOT add "book a demo" or "shall I set one up?" at the end of every reply
+5. If they didn't ask about next steps, just answer the question and stop"""
 
     msgs = [{"role": "system", "content": system}]
     for h in history[-6:]:
@@ -117,35 +108,38 @@ Answer rules:
     msgs.append({"role": "user", "content": user_msg})
 
     result = _call(msgs, max_tokens=250, temperature=0.7)
-    if not result:
-        name = lead.get("name", "")
+
+    # Empty result OR model returned IRRELEVANT → show polite deflection
+    if not result or result.strip().upper() == "IRRELEVANT":
         return (
-            f"Great question{', ' + name if name else ''}! "
-            "Our team will walk you through this in detail during the free demo — "
-            "shall I set one up for you? 😊"
+            f"Ha, that's a bit outside my expertise{name_str}! 😄 "
+            "I'm here to help with anything about WizKlub — "
+            "programs, how classes work, pricing, schedules, school partnerships. "
+            "What would you like to know?"
         )
+
     return result
 
 
-# ── 2. Personalised insight after goals/budget collected ─────────────────────
+# ── 2. Qualification insight — one personalised sentence after goals/budget ───
+# No demo mention here — this is just a warm acknowledgement of their situation.
+
 def qualification_insight(lead: dict) -> str:
     if lead.get("type") == "Parent":
         prompt = (
-            f"A parent has a child aged {lead.get('child_age')} wanting to focus on: {lead.get('goals')}. "
-            f"WizKlub programs: HOTS (critical thinking/reasoning/competitive prep for ages 6-14), "
-            f"SmartTech/YPDP (coding+robotics, builds real products), WizBlock (beginner coding age 5+). "
-            f"Write ONE warm sentence (under 25 words) recommending the most relevant program. "
-            f"Be specific. Start with emoji. No quotes."
+            f"A parent has a child aged {lead.get('child_age')} wanting: {lead.get('goals')}. "
+            f"WizKlub programs: HOTS (critical thinking/competitive prep ages 6-14), "
+            f"SmartTech/YPDP (coding + robotics), WizBlock (beginner coding age 5+). "
+            f"Write ONE warm sentence (under 25 words) recommending the best fit program. "
+            f"Be specific. Start with an emoji. No quotes. Do NOT mention demos or booking."
         )
     else:
         prompt = (
             f"A school with {lead.get('school_size')} students has a STEM budget of {lead.get('budget')}. "
-            f"WizKlub's school program integrates into the curriculum for Grades 1-9, "
-            f"includes teacher training, hands-on projects, and custom proposals. "
-            f"Write ONE warm sentence (under 25 words) about what WizKlub can offer. "
-            f"Be specific. Start with emoji. No quotes."
+            f"WizKlub's school program integrates into curriculum for Grades 1-9 with teacher training. "
+            f"Write ONE warm specific sentence (under 25 words) about what WizKlub can offer them. "
+            f"Start with an emoji. No quotes. Do NOT mention demos or booking."
         )
-
     msgs = [
         {"role": "system", "content": "You are a helpful assistant for WizKlub EdTech. Be specific, warm, and brief."},
         {"role": "user", "content": prompt},
@@ -153,18 +147,20 @@ def qualification_insight(lead: dict) -> str:
     return _call(msgs, max_tokens=70, temperature=0.8)
 
 
-# ── 3. Personalised closing after CTA ────────────────────────────────────────
+# ── 3. Closing message after CTA — warm, personal, no demo mention ────────────
+
 def ai_closing(lead: dict) -> str:
     who = (
         f"parent of a {lead.get('child_age')} child interested in {lead.get('goals')}"
         if lead.get("type") == "Parent"
-        else f"school rep for a {lead.get('school_size')} student school"
+        else f"school representative for a {lead.get('school_size')} student school"
     )
     msgs = [
-        {"role": "system", "content": "Write short warm personalised closing messages for WizKlub EdTech."},
+        {"role": "system", "content": "Write short warm personalised messages for WizKlub EdTech. Never mention demos."},
         {"role": "user", "content": (
-            f"Write one enthusiastic sentence for {lead.get('name', 'them')}, "
-            f"a {who}. Under 20 words. Start with an emoji. No quotes."
+            f"Write one warm enthusiastic sentence for {lead.get('name', 'them')}, "
+            f"a {who}, expressing genuine excitement about their learning journey ahead. "
+            f"Under 20 words. Start with an emoji. No quotes. No mention of demos."
         )},
     ]
     return _call(msgs, max_tokens=60, temperature=0.9)
