@@ -28,22 +28,24 @@ def route(text: str):
     s  = st.session_state.step
     aw = st.session_state.awaiting
 
-    # Typed field collection — direct, no AI
+    # Typed field collection — rule-based, no AI
     if aw == "name":  handle_name(text);  return
     if aw == "email": handle_email(text); return
     if aw == "phone": handle_phone(text); return
 
-    # Off-script question mid-flow — let AI answer then re-show options
-    # s can be an int OR a string ("ss", "sb"), so check type before comparing
+    # Mid-flow: any typed input that isn't clicking one of the shown buttons
+    # gets sent to the AI. The AI itself decides if it's relevant or not —
+    # we no longer do keyword matching here, that was too brittle.
+    # s can be int or string ("ss"/"sb") so check type before numeric compare.
     mid_flow = (isinstance(s, int) and 1 < s < 7) or s in ("ss", "sb")
-    if mid_flow and _is_question(text) and not _is_option_pick(text):
+    if mid_flow and not _is_option_pick(text):
         user(text)
         opts([])
         if has_key():
             reply = answer_question(text, L(), H())
             bot(reply)
         else:
-            bot("Great question! Let me finish getting your details and our team will cover everything in the free demo 😊")
+            bot("Let me finish getting your details first — then I can answer anything! 😊")
         _reshow(s)
         return
 
@@ -119,7 +121,7 @@ def handle_school_budget(v):
         if insight:
             bot(insight)
     bot(
-        f"Our partnerships team works regularly with schools of {L()['school_size']} students "
+        f"Our partnerships team works with schools of {L()['school_size']} students regularly "
         "and can build a fully costed proposal. Who should we address it to?"
     )
     opts([])
@@ -170,45 +172,39 @@ def handle_cta(v):
     L()["score"] = calc_score(L())
     st.session_state.all_leads.append(dict(L()))
 
+    # Confirmation — demo is mentioned here because the person explicitly chose it
     if "demo" in v.lower():
         bot(
-            f"🚀 Done, {L()['name']}! Our team will confirm your slot within 2 hours.\n\n"
-            "Pick a time instantly: https://calendly.com/wizklub-demo"
+            f"🚀 Confirmed, {L()['name']}! Our team will be in touch within 2 hours.\n\n"
+            "You can also pick a slot directly: https://calendly.com/wizklub-demo"
         )
     elif "email" in v.lower():
-        bot(f"📩 Full program details will be in {L()['email']}'s inbox within the hour.")
+        bot(f"📩 A full program overview will be in {L()['email']}'s inbox within the hour.")
     else:
-        bot(f"📞 Expect a call on {L()['phone']} within 30 minutes during business hours.")
+        bot(f"📞 Someone from our team will call {L()['phone']} within 30 minutes during business hours.")
 
+    # AI-generated warm closing — no demo mention (enforced in groq_client)
     if has_key():
         closing = ai_closing(L())
         if closing:
             bot(closing)
 
-    bot("Feel free to ask me anything about WizKlub — programs, fees, schedules, anything! 😊")
+    # Open the floor for questions — no demo push
+    bot("Feel free to ask me anything about WizKlub — programs, how classes work, fees, anything! 😊")
     step(8)
 
 
 def handle_freeform(text):
+    # Step 8: all messages go to AI.
+    # The AI handles WizKlub questions AND irrelevant ones (deflects politely).
+    # No fallback demo mention here.
     user(text)
     if has_key():
         bot(answer_question(text, L(), H()))
     else:
         bot(
-            f"Great question! Our team will go through everything in the demo, "
-            f"{L().get('name', 'there')}. Looking forward to it! 😊"
+            "Happy to help — reach us at hello@wizklub.com and the team will answer anything! 😊"
         )
-
-
-def _is_question(text: str) -> bool:
-    t = text.lower()
-    return any(k in t for k in [
-        "?", "what", "how", "when", "where", "why", "who", "which",
-        "cost", "price", "fee", "free", "curriculum", "teach", "learn",
-        "class", "batch", "schedule", "different", "better", "safe",
-        "refund", "certificate", "demo", "trial", "age", "hots",
-        "smarttech", "coding", "program", "course", "about",
-    ])
 
 
 def _is_option_pick(text: str) -> bool:
