@@ -34,7 +34,9 @@ def route(text: str):
     if aw == "phone": handle_phone(text); return
 
     # Off-script question mid-flow — let AI answer then re-show options
-    if s > 1 and s < 7 and _is_question(text) and not _is_option_pick(text):
+    # s can be an int OR a string ("ss", "sb"), so check type before comparing
+    mid_flow = (isinstance(s, int) and 1 < s < 7) or s in ("ss", "sb")
+    if mid_flow and _is_question(text) and not _is_option_pick(text):
         user(text)
         opts([])
         if has_key():
