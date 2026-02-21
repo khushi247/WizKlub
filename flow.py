@@ -24,21 +24,30 @@ def start_greeting():
     step(1)
 
 
-def route(text: str):
+def route(text: str, from_button: bool = False):
+    """
+    Main router called on every user input.
+
+    from_button=True  → user clicked a quick-reply button.
+                        Always goes straight to the step handler.
+                        Never intercepted by the AI mid-flow check.
+
+    from_button=False → user typed something freely.
+                        If we're mid-flow and it looks like a question,
+                        the AI handles it and we re-show the current options.
+    """
     s  = st.session_state.step
     aw = st.session_state.awaiting
 
-    # Typed field collection — rule-based, no AI
+    # Typed field collection — always rule-based regardless of source
     if aw == "name":  handle_name(text);  return
     if aw == "email": handle_email(text); return
     if aw == "phone": handle_phone(text); return
 
-    # Mid-flow: any typed input that isn't clicking one of the shown buttons
-    # gets sent to the AI. The AI itself decides if it's relevant or not —
-    # we no longer do keyword matching here, that was too brittle.
-    # s can be int or string ("ss"/"sb") so check type before numeric compare.
+    # Mid-flow free-text interception — only for typed input, never button clicks
+    # s can be int or string ("ss"/"sb") so guard the numeric compare
     mid_flow = (isinstance(s, int) and 1 < s < 7) or s in ("ss", "sb")
-    if mid_flow and not _is_option_pick(text):
+    if mid_flow and not from_button:
         user(text)
         opts([])
         if has_key():
@@ -49,6 +58,7 @@ def route(text: str):
         _reshow(s)
         return
 
+    # Normal step routing
     handlers = {
         1: handle_type, 2: handle_child_age, 3: handle_goals,
         "ss": handle_school_size, "sb": handle_school_budget,
@@ -205,10 +215,6 @@ def handle_freeform(text):
         bot(
             "Happy to help — reach us at hello@wizklub.com and the team will answer anything! 😊"
         )
-
-
-def _is_option_pick(text: str) -> bool:
-    return any(text.strip() == o.strip() for o in st.session_state.get("options", []))
 
 
 def _reshow(s):
